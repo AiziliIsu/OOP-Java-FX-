@@ -1,48 +1,206 @@
-package com.example.emailclientcourse.controller.services;
+package com.example.emailclientcourse.controller;
 
 import com.example.emailclientcourse.EmailManager;
-import com.example.emailclientcourse.controller.EmailLoginResult;
-import com.example.emailclientcourse.model.EmailAccount;
+import com.example.emailclientcourse.controller.services.MessageRendererService;
+import com.example.emailclientcourse.model.EmailMessage;
+import com.example.emailclientcourse.model.EmailTreeItem;
+import com.example.emailclientcourse.model.SizeInteger;
+import com.example.emailclientcourse.view.ViewFactory;
+import javafx.fxml.FXML;
+import javafx.fxml.Initializable;
+import javafx.scene.control.*;
+import javafx.scene.control.cell.PropertyValueFactory;
+import javafx.scene.web.WebView;
+import javafx.util.Callback;
+import java.net.URL;
+import java.util.Date;
+import java.util.ResourceBundle;
 
-import javax.mail.*;
+public class MainWindowController extends BaseController implements Initializable {
 
-public class LoginService {
-    EmailAccount emailAccount;
-    EmailManager emailManager;
+    @FXML
+    private TableView<EmailMessage> emailsTableView;
+    @FXML
+    private TableColumn<EmailMessage, String> senderCol;
+    @FXML
+    private TableColumn<EmailMessage, String> subjectCol;
+    @FXML
+    private TableColumn<EmailMessage, String> recipientCol;
+    @FXML
+    private TableColumn<EmailMessage, SizeInteger> sizeCol;
+    @FXML
+    private TableColumn<EmailMessage, Date> dateCol;
+    @FXML
+    private TreeView<String> emailsTreeView;
+    @FXML
+    private WebView emailWebView;
 
-    public LoginService(EmailAccount emailAccount, EmailManager emailManager) {
-        this.emailAccount = emailAccount;
-        this.emailManager = emailManager;
+    private MessageRendererService messageRendererService;
+
+    public MainWindowController(EmailManager emailManager, ViewFactory viewFactory, String fxmlName) {
+        super(emailManager, viewFactory, fxmlName);
     }
-    public EmailLoginResult login(){
-        Authenticator authenticator = new Authenticator() {
+
+    @FXML
+    void optionsAction() {
+        viewFactory.showOptionsWindow();
+    }
+    @FXML
+    void addAccountAction() {
+        viewFactory.showLoginWindow();
+    }
+
+    @Override
+    public void initialize(URL location, ResourceBundle resources) {
+        setUpEmailsTreeView();
+        setUpEmailsTableView();
+        setUpFolderSelection();
+        setUpBoldRows();
+        setUpMessageRendererService();
+        setUpMessageSelection();
+    }
+
+    private void setUpMessageSelection() {
+        emailsTableView.setOnMouseClicked(event -> {
+            EmailMessage emailMessage = emailsTableView.getSelectionModel().getSelectedItem();
+            if (emailMessage != null){
+                messageRendererService.setEmailMessage(emailMessage);
+                messageRendererService.restart();
+            }
+        });
+    }
+
+    private void setUpMessageRendererService() {
+        messageRendererService = new MessageRendererService(emailWebView.getEngine());
+    }
+
+    private void setUpBoldRows() {
+        emailsTableView.setRowFactory(new Callback<TableView<EmailMessage>, TableRow<EmailMessage>>() {
             @Override
-            protected PasswordAuthentication getPasswordAuthentication() {
-                return new PasswordAuthentication(emailAccount.getAddress(), emailAccount.getPassword());
+            public TableRow<EmailMessage> call(TableView<EmailMessage> param) {
+                return new TableRow<EmailMessage>() {
+                    @Override
+                    protected void updateItem(EmailMessage item, boolean empty) {
+                        super.updateItem(item, empty);
+                        if (item != null) {
+                            if (item.isRead()){
+                                setStyle("");
+                            }else{
+                                setStyle("-fx-font-weight: bold");
+                            }
+                        }
+                    }
+                };
+            }
+        });
+    }
+
+
+    private void setUpFolderSelection() {
+        emailsTreeView.setOnMouseClicked(e -> {
+            EmailTreeItem<String> item = (EmailTreeItem<String>)emailsTreeView.getSelectionModel().getSelectedItem();
+            if (item != null){
+                emailsTableView.setItems(item.getEmailMessages());
+            }
+        });
+    }
+
+    private void setUpEmailsTableView() {
+        senderCol.setCellValueFactory(new PropertyValueFactory<EmailMessage, String>("sender"));
+        subjectCol.setCellValueFactory(new PropertyValueFactory<EmailMessage, String>("subject"));
+        recipientCol.setCellValueFactory(new PropertyValueFactory<EmailMessage, String>("recipient"));
+        sizeCol.setCellValueFactory(new PropertyValueFactory<EmailMessage, SizeInteger>("size"));
+        dateCol.setCellValueFactory(new PropertyValueFactory<EmailMessage, Date>("date"));
+    }
+
+    private void setUpEmailsTreeView() {
+        emailsTreeView.setRoot(emailManager.getFoldersRoot());
+        emailsTreeView.setShowRoot(false);
+    }
+}
+
+
+package com.example.emailclientcourse.controller.services;
+import com.example.emailclientcourse.model.EmailMessage;
+import javafx.concurrent.Service;
+import javafx.concurrent.Task;
+import javafx.scene.web.WebEngine;
+import javax.mail.BodyPart;
+import javax.mail.Message;
+import javax.mail.MessagingException;
+import javax.mail.Multipart;
+import java.io.IOException;
+
+public class MessageRendererService extends Service {
+    private EmailMessage emailMessage;
+    private WebEngine webEngine;
+    private StringBuffer stringBuffer;
+
+    public MessageRendererService(WebEngine webEngine) {
+        this.webEngine = webEngine;
+        this.stringBuffer = new StringBuffer();
+        this.setOnSucceeded(event -> {
+            displayMessage();
+        });
+    }
+
+    public void setEmailMessage(EmailMessage emailMessage) {
+        this.emailMessage = emailMessage;
+    }
+
+    private void displayMessage() {
+        webEngine.loadContent(stringBuffer.toString());
+    }
+
+    @Override
+    protected Task<Void> createTask() {
+        return new Task<Void>() {
+            @Override
+            protected Void call() throws Exception {
+                try {
+                    loadMessage();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+                return null;
             }
         };
-        try {
-            Session session = Session.getInstance(emailAccount.getProperties(), authenticator);
-            Store store = session.getStore("imaps");
-            store.connect(emailAccount.getProperties().getProperty("incomingHost"),
-                    emailAccount.getAddress(),
-                    emailAccount.getPassword());
-            emailAccount.setStore(store);
+    }
 
-
-        } catch (NoSuchProviderException e) {
-            e.printStackTrace();
-            return EmailLoginResult.Failed_by_network;
-        } catch (AuthenticationFailedException e) {
-            e.printStackTrace();
-            return EmailLoginResult.Failed_by_credentials;
-        } catch (MessagingException e) {
-            e.printStackTrace();
-            return EmailLoginResult.Failed_by_unexpected_error;
-        } catch (Exception e) {
-            e.printStackTrace();
-            return EmailLoginResult.Failed_by_unexpected_error;
+    private void loadMessage() throws MessagingException, IOException {
+        stringBuffer.setLength(0);
+        Message message = emailMessage.getMessage();
+        String contentType = message.getContentType();
+        if (isSimpleType(contentType)) {
+            stringBuffer.append(message.getContent().toString());
+        } else if (isMultipartType(contentType)) {
+            Multipart multipart = (Multipart) message.getContent();
+            for (int i = multipart.getCount() - 1; i >= 0; i--) {
+                BodyPart bodyPart = multipart.getBodyPart(i);
+                String bodyPartContentType = bodyPart.getContentType();
+                if (isSimpleType(bodyPartContentType)) {
+                    stringBuffer.append(bodyPart.getContent().toString());
+                }
+            }
         }
-        return EmailLoginResult.Success;
+    }
+
+
+    private boolean isSimpleType(String contentType) {
+        if (contentType.contains("TEXT/HTML") ||
+                contentType.contains("mixed") ||
+                contentType.contains("text")) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    private boolean isMultipartType(String contentType) {
+        if (contentType.contains("multipart")) {
+            return true;
+        } else {
+            return false;
+        }
     }
 }
